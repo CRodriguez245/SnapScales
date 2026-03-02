@@ -20,7 +20,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 13px;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     color: #1e293b;
@@ -28,6 +28,18 @@
     -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
+    padding-top: 20px;
+    padding-bottom: 40px;
+  }
+
+  @media (max-width: 768px) {
+    body {
+      justify-content: flex-start;
+      padding-top: 15px;
+      padding-bottom: 30px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
   }
 
   h1 {
@@ -196,7 +208,8 @@
 
 // ── config ──────────────────────────────────────────────────
 let C        = 580;    // canvas width px (set dynamically to window width)
-const CH     = 580;    // canvas height px (fixed)
+const CH     = 580;    // canvas height px (base height for game logic)
+let actualCanvasHeight = CH;  // actual canvas height (may be taller on mobile)
 const HS     = 27;     // hex cell radius px
 const MIN_N  = 2;      // min placed neighbours to unlock a socket
 const DUR    = 450;    // snap-anim duration ms
@@ -382,7 +395,7 @@ function fitShape(shape) {
   for (let attempt = 0; attempt < 30; attempt++) {
     const pts = shapeCornerPixels(shape);
     const ok  = pts.every(pt =>
-      pt.x >= PAD && pt.x <= C - PAD && pt.y >= PAD && pt.y <= CH - PAD
+      pt.x >= PAD && pt.x <= C - PAD && pt.y >= PAD && pt.y <= actualCanvasHeight - PAD
     );
     if (ok) return;
     
@@ -641,58 +654,113 @@ function applySessionTheme() {
 
 // Spawns a new boundary at a random position that doesn't overlap existing ones.
 function spawnNewBoundary() {
-  // Calculate reasonable bounds for center positions based on canvas size
-  // Account for max possible radius (~7-8) and hex cell size
+  const isMobile = window.innerWidth <= 768;
   const maxRadiusEstimate = 8;
   const maxPixelExtentQ = maxRadiusEstimate * HS * Math.sqrt(3);  // ~374px
   const maxPixelExtentR = maxRadiusEstimate * HS * 1.5;           // ~324px
   const PAD = 20;
   
-  // Convert pixel bounds to grid coordinate bounds
-  // gridToPixel: x = C/2 + HS * (sqrt(3) * q + sqrt(3)/2 * r)
-  // For q direction: we want C/2 + HS*sqrt(3)*q ± maxPixelExtentQ to be within [PAD, C-PAD]
-  // So: PAD <= C/2 + HS*sqrt(3)*q - maxPixelExtentQ  =>  q >= (PAD - C/2 + maxPixelExtentQ) / (HS*sqrt(3))
-  // And: C/2 + HS*sqrt(3)*q + maxPixelExtentQ <= C-PAD  =>  q <= (C-PAD - C/2 - maxPixelExtentQ) / (HS*sqrt(3))
-  const qMin = Math.floor((PAD - C/2 + maxPixelExtentQ) / (HS * Math.sqrt(3)));
-  const qMax = Math.floor((C - PAD - C/2 - maxPixelExtentQ) / (HS * Math.sqrt(3)));
-  const rMin = Math.floor((PAD - CH/2 + maxPixelExtentR) / (HS * 1.5));
-  const rMax = Math.floor((CH - PAD - CH/2 - maxPixelExtentR) / (HS * 1.5));
+  let centerQ, centerR;
   
-  // Try up to 50 random positions
-  for (let attempt = 0; attempt < 50; attempt++) {
-    // Random center position constrained to fit within canvas
-    const centerQ = qMin + Math.floor(Math.random() * (qMax - qMin + 1));
-    const centerR = rMin + Math.floor(Math.random() * (rMax - rMin + 1));
-    
-    const newShape = generateShape(centerQ, centerR);
-    fitShape(newShape);
-    
-    // Check overlap
-    if (!shapesOverlap(newShape, sessionShapes)) {
-      sessionShapes.push(newShape);
-      
-      // Place initial seeds in this new boundary (same pattern as initial boundary)
-      const seedPattern = [[0,0],[1,0],[0,1],[-1,1],[-1,0],[1,-1]];
-      for (const [dq, dr] of seedPattern) {
-        const q = newShape.centerQ + dq;
-        const r = newShape.centerR + dr;
-        if (inShape(q, r, newShape) && !occupied.has(kk(q, r))) {
-          occupied.add(kk(q, r));
-          const { x, y } = gridToPixel(q, r);
-          scales.push({
-            q, r, x, y,
-            poly:  makePolygon(x, y, q, r),
-            col:   tileColor(q, r, newShape.baseHue),  // Use shape's baseHue
-            theta: tileTheta(q, r),
-            animT: 1,
-            animStart: -1e9
-          });
-        }
-      }
-      
-      return true;
+  if (isMobile) {
+    // Mobile: Stack vertically - place new boundary below existing ones
+    // Find the bottommost boundary and place new one below it
+    let maxR = 0;
+    for (const shape of sessionShapes) {
+      // Get the bottom edge of this shape (centerR + max radius in r direction)
+      const shapeBottomR = shape.centerR + Math.max(shape.radii[2], shape.radii[5] - shape.radii[2]);
+      if (shapeBottomR > maxR) maxR = shapeBottomR;
     }
+    
+    // Place new boundary below the bottommost one, centered horizontally
+    centerQ = 0;  // Center horizontally
+    centerR = maxR + 8;  // Place 8 grid units below (enough spacing)
+    
+    // Ensure it fits within canvas bounds (use actualCanvasHeight for mobile)
+    const canvasH = isMobile ? actualCanvasHeight : CH;
+    const rMax = Math.floor((canvasH - PAD - CH/2 - maxPixelExtentR) / (HS * 1.5));
+    if (centerR > rMax) {
+      // If too far down, try a random vertical position
+      const rMin = Math.floor((PAD - CH/2 + maxPixelExtentR) / (HS * 1.5));
+      centerR = rMin + Math.floor(Math.random() * (rMax - rMin + 1));
+    }
+  } else {
+    // Desktop: Place horizontally - calculate bounds as before
+    const qMin = Math.floor((PAD - C/2 + maxPixelExtentQ) / (HS * Math.sqrt(3)));
+    const qMax = Math.floor((C - PAD - C/2 - maxPixelExtentQ) / (HS * Math.sqrt(3)));
+    const rMin = Math.floor((PAD - CH/2 + maxPixelExtentR) / (HS * 1.5));
+    const rMax = Math.floor((CH - PAD - CH/2 - maxPixelExtentR) / (HS * 1.5));
+    
+    // Try up to 50 random positions
+    let found = false;
+    for (let attempt = 0; attempt < 50 && !found; attempt++) {
+      // Random center position constrained to fit within canvas
+      centerQ = qMin + Math.floor(Math.random() * (qMax - qMin + 1));
+      centerR = rMin + Math.floor(Math.random() * (rMax - rMin + 1));
+      
+      const newShape = generateShape(centerQ, centerR);
+      fitShape(newShape);
+      
+      // Check overlap
+      if (!shapesOverlap(newShape, sessionShapes)) {
+        sessionShapes.push(newShape);
+        
+        // Place initial seeds in this new boundary (same pattern as initial boundary)
+        const seedPattern = [[0,0],[1,0],[0,1],[-1,1],[-1,0],[1,-1]];
+        for (const [dq, dr] of seedPattern) {
+          const q = newShape.centerQ + dq;
+          const r = newShape.centerR + dr;
+          if (inShape(q, r, newShape) && !occupied.has(kk(q, r))) {
+            occupied.add(kk(q, r));
+            const { x, y } = gridToPixel(q, r);
+            scales.push({
+              q, r, x, y,
+              poly:  makePolygon(x, y, q, r),
+              col:   tileColor(q, r, newShape.baseHue),  // Use shape's baseHue
+              theta: tileTheta(q, r),
+              animT: 1,
+              animStart: -1e9
+            });
+          }
+        }
+        
+        found = true;
+        return true;
+      }
+    }
+    return false;  // couldn't find non-overlapping position
   }
+  
+  // For mobile, try the calculated position
+  const newShape = generateShape(centerQ, centerR);
+  fitShape(newShape);
+  
+  // Check overlap
+  if (!shapesOverlap(newShape, sessionShapes)) {
+    sessionShapes.push(newShape);
+    
+    // Place initial seeds in this new boundary (same pattern as initial boundary)
+    const seedPattern = [[0,0],[1,0],[0,1],[-1,1],[-1,0],[1,-1]];
+    for (const [dq, dr] of seedPattern) {
+      const q = newShape.centerQ + dq;
+      const r = newShape.centerR + dr;
+      if (inShape(q, r, newShape) && !occupied.has(kk(q, r))) {
+        occupied.add(kk(q, r));
+        const { x, y } = gridToPixel(q, r);
+        scales.push({
+          q, r, x, y,
+          poly:  makePolygon(x, y, q, r),
+          col:   tileColor(q, r, newShape.baseHue),  // Use shape's baseHue
+          theta: tileTheta(q, r),
+          animT: 1,
+          animStart: -1e9
+        });
+      }
+    }
+    
+    return true;
+  }
+  
   return false;  // couldn't find non-overlapping position
 }
 
@@ -1014,16 +1082,23 @@ new p5(function(p) {
   p.setup = function () {
     // Set canvas width: desktop uses full width, mobile uses screen width
     const isMobile = window.innerWidth <= 768;
+    let canvasHeight = CH;
     
     if (isMobile) {
-      // On mobile, use screen width (keep CH constant for game logic)
+      // On mobile, use screen width and taller height for vertical stacking
       C = window.innerWidth - 20;
+      // Make canvas taller to accommodate multiple boundaries stacked vertically
+      // Each boundary needs ~400px height, so 4 boundaries = ~1600px
+      canvasHeight = Math.max(CH, 1200);  // Tall enough for 3-4 boundaries
+      actualCanvasHeight = canvasHeight;
     } else {
       // Desktop: use full width with padding
       C = Math.max(580, window.innerWidth - 40);
+      canvasHeight = CH;
+      actualCanvasHeight = CH;
     }
     
-    const cnv = p.createCanvas(C, CH);
+    const cnv = p.createCanvas(C, canvasHeight);
     cnv.parent('canvas-wrap');
     // Canvas is intentionally transparent — no background, no border, no shadow.
     // The game elements float directly on the white page.
@@ -1039,6 +1114,16 @@ new p5(function(p) {
     p.frameRate(60);
     initGame();         // picks sessionHue, sets accentRgb, calls applySessionTheme
     updateUI();
+    
+    // Add touch event support for reset button on mobile
+    const resetBtn = document.getElementById('reset-btn');
+    if (resetBtn) {
+      resetBtn.addEventListener('touchend', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        resetGame();
+      }, { passive: false });
+    }
   };
 
   p.draw = function () {
@@ -1132,14 +1217,19 @@ new p5(function(p) {
   // Handle window resize — update canvas width
   p.windowResized = function () {
     const isMobile = window.innerWidth <= 768;
+    let canvasHeight = CH;
     
     if (isMobile) {
       C = window.innerWidth - 20;
+      canvasHeight = Math.max(CH, 1200);  // Tall enough for vertical stacking
+      actualCanvasHeight = canvasHeight;
     } else {
       C = Math.max(580, window.innerWidth - 40);
+      canvasHeight = CH;
+      actualCanvasHeight = CH;
     }
     
-    p.resizeCanvas(C, CH);
+    p.resizeCanvas(C, canvasHeight);
     if (isMobile && gameCanvas) {
       gameCanvas.style('width', '100%');
       gameCanvas.style('max-width', '100%');
