@@ -82,7 +82,12 @@
     box-shadow: 0 0 14px rgba(var(--accent-rgb), .22);
   }
 
-  #canvas-wrap { line-height: 0; }
+  #canvas-wrap {
+    line-height: 0;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
 
   #msg {
     height: 1.6em;
@@ -1003,24 +1008,26 @@ new p5(function(p) {
   // ── p5 lifecycle ─────────────────────────────────────────
 
   p.setup = function () {
-    // Set canvas width: desktop uses full width, mobile caps at screen width
+    // Set canvas width: desktop uses full width, mobile uses screen width
     const isMobile = window.innerWidth <= 768;
+    
     if (isMobile) {
-      // On mobile, use screen width but maintain aspect ratio
-      C = Math.min(window.innerWidth - 20, 580);
+      // On mobile, use screen width (keep CH constant for game logic)
+      C = window.innerWidth - 20;
     } else {
       // Desktop: use full width with padding
       C = Math.max(580, window.innerWidth - 40);
     }
+    
     const cnv = p.createCanvas(C, CH);
     cnv.parent('canvas-wrap');
     // Canvas is intentionally transparent — no background, no border, no shadow.
     // The game elements float directly on the white page.
     cnv.style('background', 'transparent');
+    cnv.style('display', 'block');
     if (isMobile) {
-      // On mobile, scale canvas to fit screen while maintaining aspect ratio
+      cnv.style('width', '100%');
       cnv.style('max-width', '100%');
-      cnv.style('height', 'auto');
     }
     gameCanvas = cnv;   // store for applySessionTheme()
     p.frameRate(60);
@@ -1049,15 +1056,17 @@ new p5(function(p) {
   // Handle window resize — update canvas width
   p.windowResized = function () {
     const isMobile = window.innerWidth <= 768;
+    
     if (isMobile) {
-      C = Math.min(window.innerWidth - 20, 580);
+      C = window.innerWidth - 20;
     } else {
       C = Math.max(580, window.innerWidth - 40);
     }
+    
     p.resizeCanvas(C, CH);
     if (isMobile && gameCanvas) {
+      gameCanvas.style('width', '100%');
       gameCanvas.style('max-width', '100%');
-      gameCanvas.style('height', 'auto');
     }
   };
 
