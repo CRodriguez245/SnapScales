@@ -27,18 +27,25 @@
     user-select: none;
     -webkit-touch-callout: none;
     -webkit-tap-highlight-color: transparent;
-    touch-action: manipulation;
     padding-top: 20px;
     padding-bottom: 40px;
   }
 
   @media (max-width: 768px) {
+    html, body {
+      height: 100%;
+      overflow: hidden;  /* Prevent double scrollbar on html */
+    }
+    
     body {
       justify-content: flex-start;
       padding-top: 15px;
       padding-bottom: 30px;
-      overflow-y: auto;
+      overflow-y: auto;  /* Enable scrolling on body */
       -webkit-overflow-scrolling: touch;
+      touch-action: pan-y;  /* Allow vertical scrolling, prevent horizontal */
+      min-height: 100vh;
+      height: auto;  /* Allow body to grow beyond viewport */
     }
   }
 
@@ -1107,8 +1114,8 @@ new p5(function(p) {
     if (isMobile) {
       cnv.style('width', '100%');
       cnv.style('max-width', '100%');
-      // Ensure canvas receives touch events
-      cnv.elt.style.touchAction = 'none';
+      // Allow vertical scrolling on canvas, but still capture touch events for game
+      cnv.elt.style.touchAction = 'pan-y';
     }
     gameCanvas = cnv;   // store for applySessionTheme()
     p.frameRate(60);
@@ -1178,7 +1185,8 @@ new p5(function(p) {
       p.mouseX = lastTouchX;
       p.mouseY = lastTouchY;
     }
-    return false; // Prevent default touch behaviors (scrolling, zooming)
+    // Don't prevent default - allow scrolling
+    return true;
   };
 
   // Update touch position while moving
@@ -1189,7 +1197,8 @@ new p5(function(p) {
       p.mouseX = lastTouchX;
       p.mouseY = lastTouchY;
     }
-    return false;
+    // Don't prevent default - allow scrolling
+    return true;
   };
 
   // Handle touch end - this is when the "click" happens
@@ -1199,6 +1208,7 @@ new p5(function(p) {
     p.mouseY = lastTouchY;
     
     // Check for socket at touch position and place scale
+    let placed = false;
     if (!gameOver) {
       // Recalculate hoverSock with stored position
       const mx = lastTouchX;
@@ -1207,11 +1217,14 @@ new p5(function(p) {
         const d = Math.hypot(mx - sk.x, my - sk.y);
         if (d < HS * 0.72) {
           placeScale(sk);
+          placed = true;
           break;
         }
       }
     }
-    return false;
+    // Only prevent default if we actually placed a scale (to avoid scroll jump)
+    // Otherwise allow scrolling to work normally
+    return !placed;
   };
 
   // Handle window resize — update canvas width
