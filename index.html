@@ -660,6 +660,35 @@ function applySessionTheme() {
   // no canvas box-shadow — canvas is transparent, game floats on page
 }
 
+// Expands canvas height on mobile if needed to fit all boundaries
+function expandCanvasIfNeeded() {
+  const isMobile = window.innerWidth <= 768;
+  if (!isMobile || !gameCanvas) return;
+  
+  // Find the bottommost point of all boundaries
+  let maxY = 0;
+  for (const shape of sessionShapes) {
+    const pts = shapeCornerPixels(shape);
+    for (const pt of pts) {
+      if (pt.y > maxY) maxY = pt.y;
+    }
+  }
+  
+  // Add padding and calculate needed height
+  const neededHeight = maxY + 40;  // 40px padding at bottom
+  const currentHeight = actualCanvasHeight;
+  
+  // Expand canvas if needed
+  if (neededHeight > currentHeight) {
+    actualCanvasHeight = neededHeight;
+    p.resizeCanvas(C, actualCanvasHeight);
+    if (gameCanvas) {
+      gameCanvas.style('width', '100%');
+      gameCanvas.style('max-width', '100%');
+    }
+  }
+}
+
 // Spawns a new boundary at a random position that doesn't overlap existing ones.
 function spawnNewBoundary() {
   const isMobile = window.innerWidth <= 768;
@@ -684,14 +713,8 @@ function spawnNewBoundary() {
     centerQ = 0;  // Center horizontally
     centerR = maxR + 8;  // Place 8 grid units below (enough spacing)
     
-    // Ensure it fits within canvas bounds (use actualCanvasHeight for mobile)
-    const canvasH = isMobile ? actualCanvasHeight : CH;
-    const rMax = Math.floor((canvasH - PAD - CH/2 - maxPixelExtentR) / (HS * 1.5));
-    if (centerR > rMax) {
-      // If too far down, try a random vertical position
-      const rMin = Math.floor((PAD - CH/2 + maxPixelExtentR) / (HS * 1.5));
-      centerR = rMin + Math.floor(Math.random() * (rMax - rMin + 1));
-    }
+    // Note: We'll expand the canvas if needed after placing the boundary
+    // So we don't need to constrain centerR here - just place it and expand canvas
   } else {
     // Desktop: Place horizontally - calculate bounds as before
     const qMin = Math.floor((PAD - C/2 + maxPixelExtentQ) / (HS * Math.sqrt(3)));
@@ -740,6 +763,21 @@ function spawnNewBoundary() {
   }
   
   // For mobile, try the calculated position
+  // First, estimate canvas height needed and expand if necessary
+  if (isMobile) {
+    // Estimate the bottom Y position of the new boundary
+    const estimatedBottomR = centerR + maxRadiusEstimate;
+    const { y: estimatedY } = gridToPixel(0, estimatedBottomR);
+    const neededHeight = estimatedY + maxPixelExtentR + PAD;
+    
+    if (neededHeight > actualCanvasHeight && gameCanvas) {
+      actualCanvasHeight = neededHeight;
+      p.resizeCanvas(C, actualCanvasHeight);
+      gameCanvas.style('width', '100%');
+      gameCanvas.style('max-width', '100%');
+    }
+  }
+  
   const newShape = generateShape(centerQ, centerR);
   fitShape(newShape);
   
@@ -765,6 +803,9 @@ function spawnNewBoundary() {
         });
       }
     }
+    
+    // On mobile, expand canvas again to ensure all corners fit
+    expandCanvasIfNeeded();
     
     return true;
   }
@@ -1091,11 +1132,10 @@ new p5(function(p) {
     let canvasHeight = CH;
     
     if (isMobile) {
-      // On mobile, use screen width and taller height for vertical stacking
+      // On mobile, use screen width and start with base height
+      // Canvas will expand dynamically as boundaries are added
       C = window.innerWidth - 20;
-      // Make canvas taller to accommodate multiple boundaries stacked vertically
-      // Each boundary needs ~400px height, so 4 boundaries = ~1600px
-      canvasHeight = Math.max(CH, 1200);  // Tall enough for 3-4 boundaries
+      canvasHeight = CH;  // Start with base height, will expand as needed
       actualCanvasHeight = canvasHeight;
     } else {
       // Desktop: use full width with padding
@@ -1223,8 +1263,12 @@ new p5(function(p) {
     
     if (isMobile) {
       C = window.innerWidth - 20;
-      canvasHeight = Math.max(CH, 1200);  // Tall enough for vertical stacking
+      // Start with base height, expand if boundaries exist
+      canvasHeight = CH;
       actualCanvasHeight = canvasHeight;
+      // Expand canvas to fit existing boundaries
+      expandCanvasIfNeeded();
+      canvasHeight = actualCanvasHeight;  // Use expanded height
     } else {
       C = Math.max(580, window.innerWidth - 40);
       canvasHeight = CH;
