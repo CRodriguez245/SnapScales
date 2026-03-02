@@ -32,20 +32,21 @@
   }
 
   @media (max-width: 768px) {
-    html, body {
-      height: 100%;
-      overflow: hidden;  /* Prevent double scrollbar on html */
+    html {
+      height: auto;
+      min-height: 100%;
+      overflow-x: hidden;
     }
     
     body {
       justify-content: flex-start;
       padding-top: 15px;
       padding-bottom: 30px;
-      overflow-y: auto;  /* Enable scrolling on body */
-      -webkit-overflow-scrolling: touch;
-      touch-action: pan-y;  /* Allow vertical scrolling, prevent horizontal */
       min-height: 100vh;
-      height: auto;  /* Allow body to grow beyond viewport */
+      height: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      touch-action: pan-y pinch-zoom;  /* Allow vertical scrolling and pinch zoom */
     }
   }
 
@@ -998,14 +999,12 @@ new p5(function(p) {
   }
 
   let hoverSock = null;
-  let lastTouchX = 0;
-  let lastTouchY = 0;
 
   function drawSockets() {
     hoverSock = null;
-    // Use touch coordinates if available, otherwise mouse coordinates
-    const mx = (p.touches.length > 0) ? p.touches[0].x : p.mouseX;
-    const my = (p.touches.length > 0) ? p.touches[0].y : p.mouseY;
+    // p5.js automatically converts touches to mouseX/mouseY
+    const mx = p.mouseX;
+    const my = p.mouseY;
     const t  = p.millis() * 0.001;
 
     for (const sk of sockets) {
@@ -1147,17 +1146,10 @@ new p5(function(p) {
   };
 
   p.mousePressed = function () {
-    // On touch devices, ensure we have the correct coordinates
-    if (p.touches.length > 0) {
-      p.mouseX = p.touches[0].x;
-      p.mouseY = p.touches[0].y;
-      lastTouchX = p.mouseX;
-      lastTouchY = p.mouseY;
-    }
+    // p5.js automatically converts touches to mouseX/mouseY
+    if (gameOver) return true;  // Allow default (scrolling) if game over
     
-    if (gameOver) return false;
-    
-    // Recalculate hoverSock with current mouse/touch position
+    // Check for socket at current position
     const mx = p.mouseX;
     const my = p.mouseY;
     let clickedSock = null;
@@ -1171,61 +1163,15 @@ new p5(function(p) {
     
     if (clickedSock) {
       placeScale(clickedSock);
+      return false;  // Prevent default only when placing a scale
     }
     
-    return false; // Prevent default
+    return true;  // Allow default (scrolling) if not clicking on socket
   };
 
-  // Touch support for mobile
-  p.touchStarted = function () {
-    // Store touch position for use in touchEnded
-    if (p.touches.length > 0) {
-      lastTouchX = p.touches[0].x;
-      lastTouchY = p.touches[0].y;
-      p.mouseX = lastTouchX;
-      p.mouseY = lastTouchY;
-    }
-    // Don't prevent default - allow scrolling
-    return true;
-  };
-
-  // Update touch position while moving
-  p.touchMoved = function () {
-    if (p.touches.length > 0) {
-      lastTouchX = p.touches[0].x;
-      lastTouchY = p.touches[0].y;
-      p.mouseX = lastTouchX;
-      p.mouseY = lastTouchY;
-    }
-    // Don't prevent default - allow scrolling
-    return true;
-  };
-
-  // Handle touch end - this is when the "click" happens
-  p.touchEnded = function () {
-    // Use stored touch position (touches array may be empty on touchEnded)
-    p.mouseX = lastTouchX;
-    p.mouseY = lastTouchY;
-    
-    // Check for socket at touch position and place scale
-    let placed = false;
-    if (!gameOver) {
-      // Recalculate hoverSock with stored position
-      const mx = lastTouchX;
-      const my = lastTouchY;
-      for (const sk of sockets) {
-        const d = Math.hypot(mx - sk.x, my - sk.y);
-        if (d < HS * 0.72) {
-          placeScale(sk);
-          placed = true;
-          break;
-        }
-      }
-    }
-    // Only prevent default if we actually placed a scale (to avoid scroll jump)
-    // Otherwise allow scrolling to work normally
-    return !placed;
-  };
+  // p5.js automatically converts touches to mouse events
+  // No custom touch handlers needed - they were blocking scrolling
+  // The canvas has touch-action: pan-y which allows scrolling while preserving taps
 
   // Handle window resize — update canvas width
   p.windowResized = function () {
