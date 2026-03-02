@@ -88,7 +88,7 @@
   #reset-btn {
     background: transparent;
     border: 1px solid #e2e8f0;
-    color: var(--accent);
+    color: #94a3b8;
     padding: 4px 14px;
     border-radius: 4px;
     font-size: 0.72rem;
@@ -98,8 +98,8 @@
     transition: border-color .2s, box-shadow .2s, color .6s;
   }
   #reset-btn:hover {
-    border-color: var(--accent);
-    box-shadow: 0 0 14px rgba(var(--accent-rgb), .22);
+    border-color: #94a3b8;
+    box-shadow: 0 0 14px rgba(148, 163, 184, .22);
   }
 
   #canvas-wrap {
@@ -201,8 +201,7 @@
 <p class="hint">Fill every socket inside the boundary. Cross the line and you lose.</p>
 
 <div id="bar">
-  <div class="stat">Scales  <span class="val" id="n-scales">0</span></div>
-  <div class="stat">Sockets <span class="val" id="n-sockets">0</span></div>
+  <div class="stat">Scales  <span class="val" id="n-scales" style="color: #000000;">0</span></div>
   <button id="reset-btn" onclick="resetGame()">↺&nbsp; Reset</button>
 </div>
 
@@ -851,9 +850,6 @@ function initGame() {
 
 function updateUI() {
   document.getElementById('n-scales').textContent  = scales.length;
-  // Socket counter shows only safe (inside-boundary) sockets
-  const safeSockets = sockets.filter(s => !s.danger).length;
-  document.getElementById('n-sockets').textContent = safeSockets;
 
   const msgEl = document.getElementById('msg');
   if (gameLost) {
