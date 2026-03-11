@@ -102,6 +102,23 @@
     box-shadow: 0 0 14px rgba(148, 163, 184, .22);
   }
 
+  #export-btn, #export-dxf-btn {
+    background: transparent;
+    border: 1px solid #e2e8f0;
+    color: #94a3b8;
+    padding: 4px 14px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: border-color .2s, box-shadow .2s, color .6s;
+  }
+  #export-btn:hover, #export-dxf-btn:hover {
+    border-color: #94a3b8;
+    box-shadow: 0 0 14px rgba(148, 163, 184, .22);
+  }
+
   #canvas-wrap {
     line-height: 0;
     width: 100%;
@@ -198,11 +215,14 @@
 <body>
 
 <h1>SnapScales</h1>
-<p class="hint">Fill every socket inside the boundary. Cross the line and you lose.</p>
+<p class="hint">Fill every socket inside the boundary. 10s countdown, +1s per scale. Cross the line = game over. Export SVG/DXF for laser cutting.</p>
 
 <div id="bar">
   <div class="stat">Scales  <span class="val" id="n-scales" style="color: #000000;">0</span></div>
+  <div class="stat">Time  <span class="val" id="timer">10</span></div>
   <button id="reset-btn" onclick="resetGame()">↺&nbsp; Reset</button>
+  <button id="export-btn" onclick="exportForLaser('svg')" title="Export SVG for laser cutting">↓&nbsp; SVG</button>
+  <button id="export-dxf-btn" onclick="exportForLaser('dxf')" title="Export DXF for laser cutting">↓&nbsp; DXF</button>
 </div>
 
 <div id="canvas-wrap"></div>
@@ -218,20 +238,34 @@ let C        = 580;    // canvas width px (set dynamically to window width)
 const CH     = 580;    // canvas height px (base height for game logic)
 let actualCanvasHeight = CH;  // actual canvas height (may be taller on mobile)
 const HS     = 27;     // hex cell radius px
-const MIN_N  = 2;      // min placed neighbours to unlock a socket
+const MIN_N  = 1;      // min placed neighbours to unlock a socket (1 = expand from any tile)
 const DUR    = 450;    // snap-anim duration ms
 
 // axial hex directions (pointy-top)
 const DIRS = [[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
 
-// starting cluster: centre + a ring of 5
-const SEEDS = [[0,0],[1,0],[0,1],[-1,1],[-1,0],[1,-1]];
+// Neighbour offsets — try (0,-1) first (good for triangles), then others
+const SEED_NEIGHBOURS = [[0,-1],[1,-1],[-1,-1],[1,0],[0,1],[-1,0]];
+
+// Returns seeds for a shape: center + first neighbour that fits (ensures 2 adjacent for sockets)
+function getSeedsForShape(shape) {
+  const seeds = [[0, 0]];
+  for (const [dq, dr] of SEED_NEIGHBOURS) {
+    const q = shape.centerQ + dq;
+    const r = shape.centerR + dr;
+    if (inShape(q, r, shape)) {
+      seeds.push([dq, dr]);
+      return seeds;
+    }
+  }
+  return seeds;
+}
 
 // ── session palette + shape (randomised each init/reset) ─────
 let sessionHue   = 155;           // 0-360, drives all colours this session
 let accentRgb    = [52, 211, 153]; // [r,g,b] 0-255 — bright accent from sessionHue
 let gameCanvas   = null;           // p5 canvas element, set in p.setup
-let sessionShapes = [];            // Array<{ radii:[r0..r5], label, centerQ, centerR }>
+let sessionShapes = [];            // Array<{ type, centerQ, centerR, size, baseHue }>
 let scalesPlaced = 0;              // counter for progressive boundary spawning
 
 // ── state ────────────────────────────────────────────────────
@@ -241,6 +275,9 @@ let sockets   = [];          // Array<SocketObj>  — each has { …, danger: bo
 let particles = [];
 let gameOver  = false;
 let gameLost  = false;       // true when player placed a scale past the boundary
+let timerExpired = false;    // true when countdown reaches 0
+let timeRemaining = 10;      // seconds left (starts at 10, +1 per scale placed)
+let lastTimerMs = 0;        // last frame time for delta
 
 // ── pure utilities ───────────────────────────────────────────
 const kk = (q, r) => `${q},${r}`;
@@ -250,6 +287,12 @@ function gridToPixel(q, r) {
     x: C / 2 + HS * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r),
     y: CH / 2 + HS * (1.5 * r)
   };
+}
+
+function pixelToGrid(px, py) {
+  const r = (py - CH / 2) / (HS * 1.5);
+  const q = (px - C / 2 - HS * (Math.sqrt(3) / 2) * r) / (HS * Math.sqrt(3));
+  return { q, r };
 }
 
 function neighbours(q, r) {
@@ -324,110 +367,44 @@ function tileTheta(q, r) {
 }
 
 // ── playfield shape ───────────────────────────────────────────
-// The playfield is a convex region in axial/cube space defined by 6 half-planes.
-// Cube coords: x=q, z=r, y=−q−r.  Constraints → R[i]:
-//   i=0: q  ≤ R[0]   (right)
-//   i=1: −q ≤ R[1]   (left)
-//   i=2: r  ≤ R[2]   (bottom-right)
-//   i=3: −r ≤ R[3]   (top-left)
-//   i=4: −q−r ≤ R[4] (bottom-left / cube-y)
-//   i=5:  q+r ≤ R[5] (top-right  / −cube-y)
+// Geometric shapes defined as polygons in pixel space.
+// Shape: { type, centerQ, centerR, size, baseHue }
 
-// Generates a new shape object with random radii and optional center offset.
-// Returns { radii, label, centerQ, centerR, curved }.
+const GEOM_TYPES = ['circle', 'square', 'triangle', 'pentagon', 'hexagon'];
+
+// Generates a geometric shape. size = radius in pixels (from center to vertex).
 function generateShape(centerQ = 0, centerR = 0) {
-  const base = 4 + Math.floor(Math.random() * 3);  // 4, 5, or 6 (slightly smaller for multiple)
-  const type = Math.floor(Math.random() * 6);  // 0-5 (added curved type)
-  let R, label, curved = false;
+  const type = GEOM_TYPES[Math.floor(Math.random() * GEOM_TYPES.length)];
+  // Size: HS * 2.2 to HS * 3.2 (triangles get +40% — they have less area per radius)
+  let size = HS * (2.2 + Math.random() * 1.0);
+  if (type === 'triangle') size *= 1.4;
 
-  if (type === 0) {
-    // ── Regular hexagon ──────────────────────────────────────
-    R = Array(6).fill(base);
-    label = 'hex';
-
-  } else if (type === 1) {
-    // ── Elongated along one of the 3 hex axes ────────────────
-    const axis  = Math.floor(Math.random() * 3);   // 0=q, 1=r, 2=diagonal
-    const extra = 2 + Math.floor(Math.random() * 2);
-    R = Array(6).fill(base);
-    R[axis * 2]     += extra;
-    R[axis * 2 + 1] += extra;
-    // Shrink perpendicular axes slightly so it feels clearly elongated
-    for (let i = 0; i < 6; i++)
-      if (i !== axis * 2 && i !== axis * 2 + 1) R[i] = Math.max(3, R[i] - 1);
-    label = ['wide', 'tall', 'diagonal'][axis];
-
-  } else if (type === 2) {
-    // ── Organic blob — each of the 6 walls independently varies ──
-    R = Array.from({ length: 6 }, () => base - 1 + Math.floor(Math.random() * 4));
-    label = 'blob';
-
-  } else if (type === 3) {
-    // ── Wedge / asymmetric push ───────────────────────────────
-    R = Array(6).fill(base);
-    const push = Math.floor(Math.random() * 6);
-    R[push]              = base + 3;
-    R[(push + 3) % 6]    = Math.max(3, base - 2);  // opposite side in
-    label = 'wedge';
-
-  } else if (type === 4) {
-    // ── Squarish — two opposing pairs stretched, two pairs compressed ──
-    R = [base+2, base+2, base-1, base-1, base+2, base+2];
-    label = 'square';
-
-  } else {
-    // ── Curved/organic — uses curved edges instead of straight lines ──
-    R = Array.from({ length: 6 }, () => base - 1 + Math.floor(Math.random() * 4));
-    label = 'curved';
-    curved = true;
-  }
-
-  // Assign each shape a unique base hue based on its center position
-  // This ensures each boundary has a distinct, stable color family
   const hash = ((centerQ * 73856093) ^ (centerR * 19349663)) >>> 0;
-  const hueOffset = (hash % 120);  // 0-119 for good spread
-  const baseHue = (sessionHue + hueOffset) % 360;  // Spread around color wheel
+  const hueOffset = (hash % 120);
+  const baseHue = (sessionHue + hueOffset) % 360;
 
-  return { radii: R, label, centerQ, centerR, curved, baseHue };
+  return { type, centerQ, centerR, size, baseHue };
 }
 
-// Iteratively shrinks each radius by 1 until the full boundary polygon fits
-// inside the canvas with a small inset margin — guarantees no edge cropping.
-// Iteratively shrinks each radius until the full boundary polygon fits
-// inside the canvas with padding — ensures boundaries are fully visible.
+// Scale shape down until it fits within canvas.
 function fitShape(shape) {
-  const PAD = 20;   // px inset from canvas edge (generous padding)
-  const minRadius = 3;  // minimum radius to keep boundaries meaningful
-  
+  const PAD = 20;
+  const minSize = HS * 0.5;
   for (let attempt = 0; attempt < 30; attempt++) {
     const pts = shapeCornerPixels(shape);
-    const ok  = pts.every(pt =>
+    const ok = pts.every(pt =>
       pt.x >= PAD && pt.x <= C - PAD && pt.y >= PAD && pt.y <= actualCanvasHeight - PAD
     );
     if (ok) return;
-    
-    // Still outside — shrink each radius by 1 (floor at minRadius)
-    let allAtMin = true;
-    for (let i = 0; i < 6; i++) {
-      if (shape.radii[i] > minRadius) {
-        shape.radii[i] = Math.max(minRadius, shape.radii[i] - 1);
-        allAtMin = false;
-      }
-    }
-    
-    // If all radii are at minimum and still doesn't fit, give up
-    // (this shouldn't happen with reasonable canvas size, but prevents infinite loop)
-    if (allAtMin) break;
+    shape.size = Math.max(minSize, shape.size * 0.85);
   }
 }
 
-// Returns true if axial cell (q,r) is inside the given shape (accounting for center offset).
+// Returns true if axial cell (q,r) is inside the given shape (point-in-polygon).
 function inShape(q, r, shape) {
-  const qRel = q - shape.centerQ;
-  const rRel = r - shape.centerR;
-  const R = shape.radii;
-  return qRel <= R[0] && -qRel <= R[1] && rRel <= R[2] && -rRel <= R[3]
-      && (-qRel - rRel) <= R[4] && (qRel + rRel) <= R[5];
+  const { x, y } = gridToPixel(q, r);
+  const poly = shapeCornerPixels(shape);
+  return pointInPolygon(x, y, poly);
 }
 
 // Returns true if (q,r) is inside ANY active boundary.
@@ -435,89 +412,62 @@ function inAnyShape(q, r) {
   return sessionShapes.some(shape => inShape(q, r, shape));
 }
 
-// Derives the 6 polygon corner points of the shape boundary in pixel space.
-// Each corner is the intersection of two adjacent constraint half-planes.
-function shapeCornerPixels(shape) {
-  const R = shape.radii;
-  // Corners in axial coords relative to shape center (derived analytically)
-  const axialCorners = [
-    [ R[0],          R[5] - R[0]],   // right       (i=0 ∩ i=5)
-    [ R[5] - R[2],   R[2]       ],   // bottom-right (i=5 ∩ i=2)
-    [-R[1],          R[2]       ],   // bottom-left  (i=2 ∩ i=1)
-    [-R[1],          R[1]-R[4]  ],   // left         (i=1 ∩ i=4)
-    [ R[3] - R[4],  -R[3]      ],   // top-left     (i=4 ∩ i=3)
-    [ R[0],         -R[3]      ],   // top-right    (i=3 ∩ i=0)
-  ];
-  const baseCorners = axialCorners.map(([dq, dr]) => {
-    // Convert to absolute coords, then to pixels
-    const q = shape.centerQ + dq;
-    const r = shape.centerR + dr;
-    const { x, y } = gridToPixel(q, r);
-    // Nudge each corner outward from shape center so the outline
-    // clears the outermost tile centres by ~half a hex width.
-    const centerPx = gridToPixel(shape.centerQ, shape.centerR);
-    const dx = x - centerPx.x;
-    const dy = y - centerPx.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    return { x: x + (dx / len) * HS * 0.6, y: y + (dy / len) * HS * 0.6 };
-  });
-
-  // For curved shapes, generate additional points along edges with organic perturbations
-  if (shape.curved) {
-    return generateCurvedBoundary(baseCorners, shape);
+// Returns true when every cell inside every boundary is filled.
+function allBoundariesFilled() {
+  // Compute extent from actual shapes (shapes can be stacked far below on mobile)
+  let qMin = Infinity, qMax = -Infinity, rMin = Infinity, rMax = -Infinity;
+  for (const shape of sessionShapes) {
+    const extent = Math.ceil(shape.size / HS) + 2;
+    qMin = Math.min(qMin, shape.centerQ - extent);
+    qMax = Math.max(qMax, shape.centerQ + extent);
+    rMin = Math.min(rMin, shape.centerR - extent);
+    rMax = Math.max(rMax, shape.centerR + extent);
   }
-  
-  return baseCorners;
-}
-
-// Generates curved boundary points using smooth geometric curves (bezier arcs).
-// Each edge curves outward or inward in a controlled, geometric way.
-function generateCurvedBoundary(baseCorners, shape) {
-  const points = [];
-  const numPointsPerEdge = 12;  // More points for smooth curves
-  const rng = tileRng(shape.centerQ * 17, shape.centerR * 23);  // Stable RNG per shape
-  
-  for (let i = 0; i < baseCorners.length; i++) {
-    const p1 = baseCorners[i];
-    const p2 = baseCorners[(i + 1) % baseCorners.length];
-    
-    // Add start point
-    if (i === 0) points.push(p1);
-    
-    // Determine curve direction for this edge (outward or inward)
-    // Use stable RNG so each edge has consistent curve direction
-    const edgeRng = tileRng(shape.centerQ + i * 7, shape.centerR + i * 11);
-    const curveOutward = edgeRng() > 0.5;  // 50/50 chance per edge
-    const curveAmount = 0.15 + edgeRng() * 0.12;  // 0.15 to 0.27 (subtle curve)
-    
-    // Calculate edge midpoint and perpendicular direction
-    const midX = (p1.x + p2.x) / 2;
-    const midY = (p1.y + p2.y) / 2;
-    const dx = p2.x - p1.x;
-    const dy = p2.y - p1.y;
-    const edgeLen = Math.sqrt(dx * dx + dy * dy) || 1;
-    const perpX = -dy / edgeLen;
-    const perpY = dx / edgeLen;
-    
-    // Control point for bezier curve (bulges at midpoint)
-    const bulgeDist = edgeLen * curveAmount * (curveOutward ? 1 : -1);
-    const controlX = midX + perpX * bulgeDist;
-    const controlY = midY + perpY * bulgeDist;
-    
-    // Generate smooth bezier curve points along this edge
-    for (let j = 1; j < numPointsPerEdge; j++) {
-      const t = j / numPointsPerEdge;
-      const mt = 1 - t;
-      
-      // Quadratic bezier: (1-t)²P₁ + 2(1-t)tPc + t²P₂
-      const x = mt * mt * p1.x + 2 * mt * t * controlX + t * t * p2.x;
-      const y = mt * mt * p1.y + 2 * mt * t * controlY + t * t * p2.y;
-      
-      points.push({ x, y });
+  for (let q = qMin; q <= qMax; q++) {
+    for (let r = rMin; r <= rMax; r++) {
+      if (inAnyShape(q, r) && !occupied.has(kk(q, r))) return false;
     }
   }
-  
-  return points;
+  return true;
+}
+
+// Derives polygon vertices for the shape in pixel space.
+// Angles: 0° = right, 90° = down (canvas). Vertices use cx + r*cos(θ), cy + r*sin(θ).
+function shapeCornerPixels(shape) {
+  const { x: cx, y: cy } = gridToPixel(shape.centerQ, shape.centerR);
+  const r = shape.size;
+  const pts = [];
+
+  if (shape.type === 'circle') {
+    // Octagon approximation
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 - Math.PI / 2;  // start from top
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    }
+  } else if (shape.type === 'square') {
+    const a45 = Math.PI / 4;
+    for (let i = 0; i < 4; i++) {
+      const a = a45 + (i / 4) * Math.PI * 2;
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    }
+  } else if (shape.type === 'triangle') {
+    for (let i = 0; i < 3; i++) {
+      const a = Math.PI / 2 + (i / 3) * Math.PI * 2;  // point-up
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    }
+  } else if (shape.type === 'pentagon') {
+    for (let i = 0; i < 5; i++) {
+      const a = Math.PI / 2 + (i / 5) * Math.PI * 2;
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    }
+  } else {
+    // hexagon
+    for (let i = 0; i < 6; i++) {
+      const a = Math.PI / 2 + (i / 6) * Math.PI * 2;  // pointy-top
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+    }
+  }
+  return pts;
 }
 
 // Point-in-polygon test using ray casting algorithm
@@ -691,7 +641,7 @@ function expandCanvasIfNeeded() {
 // Spawns a new boundary at a random position that doesn't overlap existing ones.
 function spawnNewBoundary() {
   const isMobile = window.innerWidth <= 768;
-  const maxRadiusEstimate = 8;
+  const maxRadiusEstimate = 3;  // geometric shapes are smaller
   const maxPixelExtentQ = maxRadiusEstimate * HS * Math.sqrt(3);  // ~374px
   const maxPixelExtentR = maxRadiusEstimate * HS * 1.5;           // ~324px
   const PAD = 20;
@@ -700,17 +650,17 @@ function spawnNewBoundary() {
   
   if (isMobile) {
     // Mobile: Stack vertically - place new boundary below existing ones
-    // Find the bottommost boundary and place new one below it
     let maxR = 0;
     for (const shape of sessionShapes) {
-      // Get the bottom edge of this shape (centerR + max radius in r direction)
-      const shapeBottomR = shape.centerR + Math.max(shape.radii[2], shape.radii[5] - shape.radii[2]);
-      if (shapeBottomR > maxR) maxR = shapeBottomR;
+      const pts = shapeCornerPixels(shape);
+      for (const pt of pts) {
+        const { r } = pixelToGrid(pt.x, pt.y);
+        if (r > maxR) maxR = r;
+      }
     }
     
-    // Place new boundary below the bottommost one, centered horizontally
-    centerQ = 0;  // Center horizontally
-    centerR = maxR + 8;  // Place 8 grid units below (enough spacing)
+    centerQ = 0;
+    centerR = Math.ceil(maxR) + 3;  // tight spacing for dense layout
     
     // Note: We'll expand the canvas if needed after placing the boundary
     // So we don't need to constrain centerR here - just place it and expand canvas
@@ -721,9 +671,9 @@ function spawnNewBoundary() {
     const rMin = Math.floor((PAD - CH/2 + maxPixelExtentR) / (HS * 1.5));
     const rMax = Math.floor((CH - PAD - CH/2 - maxPixelExtentR) / (HS * 1.5));
     
-    // Try up to 50 random positions
+    // Try up to 150 random positions (dense layout needs more tries)
     let found = false;
-    for (let attempt = 0; attempt < 50 && !found; attempt++) {
+    for (let attempt = 0; attempt < 150 && !found; attempt++) {
       // Random center position constrained to fit within canvas
       centerQ = qMin + Math.floor(Math.random() * (qMax - qMin + 1));
       centerR = rMin + Math.floor(Math.random() * (rMax - rMin + 1));
@@ -735,9 +685,8 @@ function spawnNewBoundary() {
       if (!shapesOverlap(newShape, sessionShapes)) {
         sessionShapes.push(newShape);
         
-        // Place initial seeds in this new boundary (same pattern as initial boundary)
-        const seedPattern = [[0,0],[1,0],[0,1],[-1,1],[-1,0],[1,-1]];
-        for (const [dq, dr] of seedPattern) {
+        // Place initial seeds (center + first neighbour that fits — ensures sockets)
+        for (const [dq, dr] of getSeedsForShape(newShape)) {
           const q = newShape.centerQ + dq;
           const r = newShape.centerR + dr;
           if (inShape(q, r, newShape) && !occupied.has(kk(q, r))) {
@@ -784,9 +733,8 @@ function spawnNewBoundary() {
   if (!shapesOverlap(newShape, sessionShapes)) {
     sessionShapes.push(newShape);
     
-    // Place initial seeds in this new boundary (same pattern as initial boundary)
-    const seedPattern = [[0,0],[1,0],[0,1],[-1,1],[-1,0],[1,-1]];
-    for (const [dq, dr] of seedPattern) {
+    // Place initial seeds (center + first neighbour that fits — ensures sockets)
+    for (const [dq, dr] of getSeedsForShape(newShape)) {
       const q = newShape.centerQ + dq;
       const r = newShape.centerR + dr;
       if (inShape(q, r, newShape) && !occupied.has(kk(q, r))) {
@@ -825,15 +773,21 @@ function initGame() {
   particles    = [];
   gameOver     = false;
   gameLost     = false;
+  timerExpired = false;
+  timeRemaining = 10;
+  lastTimerMs = 0;
   scalesPlaced = 0;
   sessionShapes = [];
 
-  // Start with one boundary centered at origin
+  // Start with one boundary; more spawn progressively as you place scales
   const initialShape = generateShape(0, 0);
   fitShape(initialShape);
   sessionShapes.push(initialShape);
 
-  for (const [q, r] of SEEDS) {
+  for (const [dq, dr] of getSeedsForShape(initialShape)) {
+    const q = initialShape.centerQ + dq;
+    const r = initialShape.centerR + dr;
+    if (occupied.has(kk(q, r))) continue;
     occupied.add(kk(q, r));
     const { x, y } = gridToPixel(q, r);
     scales.push({
@@ -848,12 +802,92 @@ function initGame() {
   recomputeSockets();
 }
 
+// Export scales for laser cutting. format: 'svg' or 'dxf'
+function exportForLaser(format) {
+  if (scales.length === 0) {
+    alert('Place at least one scale to export.');
+    return;
+  }
+  const MM_PER_PX = 0.5;  // 1px = 0.5mm (adjust for material size)
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const sc of scales) {
+    for (const v of sc.poly) {
+      minX = Math.min(minX, v.x); minY = Math.min(minY, v.y);
+      maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y);
+    }
+  }
+  const pad = 5;
+  const toMm = (x, y, flipY = false) => ({
+    x: (x - minX + pad) * MM_PER_PX,
+    y: flipY ? (maxY - y + pad) * MM_PER_PX : (y - minY + pad) * MM_PER_PX
+  });
+
+  if (format === 'svg') {
+    const w = (maxX - minX + pad * 2) * MM_PER_PX;
+    const h = (maxY - minY + pad * 2) * MM_PER_PX;
+    const paths = scales.map(sc => {
+      const pts = sc.poly.map(v => toMm(v.x, v.y, false));
+      const d = pts.map((p, i) => (i === 0 ? 'M' : 'L') + p.x.toFixed(3) + ',' + p.y.toFixed(3)).join(' ') + ' Z';
+      return `<path d="${d}" fill="none" stroke="#000" stroke-width="0.01"/>`;
+    }).join('\n  ');
+    const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w.toFixed(2)} ${h.toFixed(2)}" width="${w.toFixed(2)}mm" height="${h.toFixed(2)}mm">
+  ${paths}
+</svg>`;
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `snapscales-${Date.now()}.svg`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } else {
+    // DXF R12 format - LWPOLYLINE entities (Y-up)
+    const entities = scales.map(sc => {
+      const pts = sc.poly.map(v => toMm(v.x, v.y, true));
+      let dxf = '0\nLWPOLYLINE\n8\n0\n62\n7\n70\n1\n';  // closed polyline
+      for (const p of pts) {
+        dxf += `10\n${p.x.toFixed(6)}\n20\n${p.y.toFixed(6)}\n`;
+      }
+      return dxf;
+    }).join('');
+    const dxf = `0
+SECTION
+2
+HEADER
+9
+$ACADVER
+1
+AC1009
+0
+ENDSEC
+0
+SECTION
+2
+ENTITIES
+${entities}0
+ENDSEC
+0
+EOF`;
+    const blob = new Blob([dxf], { type: 'application/dxf' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `snapscales-${Date.now()}.dxf`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+}
+
 function updateUI() {
   document.getElementById('n-scales').textContent  = scales.length;
+  document.getElementById('timer').textContent    = Math.ceil(timeRemaining);
 
   const msgEl = document.getElementById('msg');
   if (gameLost) {
     msgEl.textContent  = '✦   Boundary Breached   ✦';
+    msgEl.style.color  = '#ef4444';
+    msgEl.style.textShadow = '0 0 18px rgba(239,68,68,.35)';
+  } else if (timerExpired) {
+    msgEl.textContent  = '✦   Time\'s Up!   ✦';
     msgEl.style.color  = '#ef4444';
     msgEl.style.textShadow = '0 0 18px rgba(239,68,68,.35)';
   } else if (gameOver) {
@@ -911,16 +945,16 @@ new p5(function(p) {
     });
     spawnParticles(x, y);
     scalesPlaced++;
+    timeRemaining += 1;   // +1 second per scale placed
     
-    // Spawn new boundaries progressively: after 4, 8, 12, 16 scales placed
-    // (but cap at 4 total boundaries to avoid clutter)
-    if (sessionShapes.length < 4 && scalesPlaced > 0 && scalesPlaced % 4 === 0) {
+    // Spawn one new boundary unpredictably (~40% chance, after first 2 scales)
+    if (sessionShapes.length < 20 && scalesPlaced > 2 && Math.random() < 0.4) {
       spawnNewBoundary();
     }
     
     recomputeSockets();
-    // Win when no safe (non-danger) sockets remain
-    if (sockets.every(s => s.danger)) gameOver = true;
+    // Win only when every cell inside every boundary is filled
+    if (allBoundariesFilled()) gameOver = true;
     updateUI();
   }
 
@@ -954,28 +988,9 @@ new p5(function(p) {
       p.strokeWeight(1.8);
       p.drawingContext.shadowBlur  = 10;
       p.drawingContext.shadowColor = `rgba(${ar},${ag},${ab},0.35)`;
-      
-      if (shape.curved) {
-        // Draw smooth curves for organic shapes
-        p.beginShape();
-        // For curveVertex, we need to duplicate first/last points for smooth closure
-        if (pts.length > 0) {
-          p.curveVertex(pts[pts.length - 1].x, pts[pts.length - 1].y);  // wrap around
-        }
-        for (const pt of pts) {
-          p.curveVertex(pt.x, pt.y);
-        }
-        if (pts.length > 0) {
-          p.curveVertex(pts[0].x, pts[0].y);  // wrap around
-          p.curveVertex(pts[1]?.x || pts[0].x, pts[1]?.y || pts[0].y);  // smooth close
-        }
-        p.endShape(p.CLOSE);
-      } else {
-        // Draw straight edges for regular shapes
-        p.beginShape();
-        for (const pt of pts) p.vertex(pt.x, pt.y);
-        p.endShape(p.CLOSE);
-      }
+      p.beginShape();
+      for (const pt of pts) p.vertex(pt.x, pt.y);
+      p.endShape(p.CLOSE);
       
       p.drawingContext.setLineDash([]);
       p.drawingContext.shadowBlur = 0;
@@ -1171,6 +1186,20 @@ new p5(function(p) {
   p.draw = function () {
     p.clear();   // transparent every frame — no white canvas square
 
+    // Timer countdown (only when game is active)
+    if (!gameOver) {
+      const now = p.millis();
+      if (lastTimerMs > 0) {
+        const deltaSec = (now - lastTimerMs) / 1000;
+        timeRemaining = Math.max(0, timeRemaining - deltaSec);
+        if (timeRemaining <= 0) {
+          timerExpired = true;
+          gameOver = true;
+        }
+      }
+      lastTimerMs = now;
+    }
+
     drawBoundary();
     drawGridDots();
     drawSockets();
@@ -1178,6 +1207,7 @@ new p5(function(p) {
     drawParticles();
     drawGameOverOverlay();
 
+    updateUI();   // refresh timer + message every frame
     p.cursor(hoverSock ? 'pointer' : p.ARROW);
   };
 
