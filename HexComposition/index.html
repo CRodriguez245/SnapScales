@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Hex Composition — SnapScales</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --accent: #34d399;
+      --text: #1e293b;
+      --muted: #94a3b8;
+      --border: #e2e8f0;
+      --blue: #2563eb;
+      --purple: #7c3aed;
+      --warn: #d97706;
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #ffffff;
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 13px;
+      padding: 20px 16px 40px;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    h1 {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-size: 2.4rem;
+      font-weight: normal;
+      letter-spacing: 4px;
+      color: #000000;
+      text-align: center;
+    }
+    .hint {
+      font-size: 0.72rem;
+      letter-spacing: 1px;
+      color: var(--muted);
+      text-align: center;
+      max-width: 34rem;
+      line-height: 1.5;
+      padding: 0 8px;
+    }
+    .hint .c-blue { color: var(--blue); font-weight: 600; }
+    .hint .c-purple { color: var(--purple); font-weight: 600; }
+    .wheels-block {
+      width: 100%;
+      max-width: 440px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .challenge-list-wrap {
+      width: 100%;
+      margin-top: 4px;
+    }
+    .challenge-list-wrap .subcap {
+      font-size: 0.65rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .challenge-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      background: #fafafa;
+    }
+    .challenge-list li {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      font-size: 0.8rem;
+      line-height: 1.4;
+      color: var(--text);
+      border-bottom: 1px solid var(--border);
+    }
+    .challenge-list li:last-child { border-bottom: none; }
+    .challenge-list li .ch-num {
+      flex-shrink: 0;
+      font-weight: 700;
+      color: var(--muted);
+      width: 1.4em;
+    }
+    .challenge-list li.picked {
+      background: #ecfdf5;
+      box-shadow: inset 3px 0 0 var(--accent);
+    }
+    .wheel-spin-btn {
+      margin-top: 8px;
+      width: 100%;
+      max-width: 200px;
+    }
+    .wheel-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 8px 20px;
+      flex-wrap: wrap;
+      width: 100%;
+    }
+    .wheel-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+    .wheel-caption {
+      font-size: 0.65rem;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .wheel-mount {
+      position: relative;
+      filter: drop-shadow(0 2px 8px rgba(15, 23, 42, 0.08));
+    }
+    .wheel-mount::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: -2px;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 10px solid transparent;
+      border-right: 10px solid transparent;
+      border-top: 14px solid var(--text);
+      z-index: 2;
+    }
+    .wheel-svg {
+      display: block;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      transform-origin: 50% 50%;
+    }
+    .wheel-svg.spinning {
+      transition: transform 3.2s cubic-bezier(0.12, 0.72, 0.12, 0.99);
+    }
+    .wheel-svg.win-wheel.spinning {
+      transition-duration: 2.4s;
+    }
+    .wheel-svg text {
+      font-size: 11px;
+      font-weight: 600;
+      fill: #1e293b;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+    }
+    .wheel-svg.challenge-wheel text {
+      font-size: 22px;
+      font-weight: 700;
+      fill: #0f172a;
+    }
+    .wheel-svg.win-wheel text {
+      font-size: 13px;
+    }
+    .panel {
+      width: 100%;
+      max-width: 440px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 18px 20px 20px;
+    }
+    .rule-label {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    #rule-text, #win-text {
+      font-size: clamp(0.95rem, 3.6vw, 1.15rem);
+      line-height: 1.45;
+      font-weight: 500;
+      min-height: 2.8em;
+    }
+    #rule-text .c-blue, #win-text .c-blue { color: var(--blue); font-weight: 600; }
+    #rule-text .c-purple, #win-text .c-purple { color: var(--purple); font-weight: 600; }
+    .rule-label.win-after {
+      margin-top: 16px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+    }
+    .win-note {
+      font-size: 0.68rem;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-top: 10px;
+      line-height: 1.4;
+    }
+    .timer-wrap { text-align: center; margin-top: 14px; }
+    #timer {
+      font-variant-numeric: tabular-nums;
+      font-size: clamp(2.8rem, 11vw, 4rem);
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      line-height: 1;
+      color: var(--accent);
+      transition: color 0.35s;
+    }
+    #timer.warning { color: var(--warn); }
+    #timer.ended { color: var(--muted); }
+    .status {
+      min-height: 1.6em;
+      font-size: 0.88rem;
+      letter-spacing: 0.04em;
+      text-align: center;
+      margin-top: 8px;
+      color: var(--muted);
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: center;
+      margin-top: 16px;
+    }
+    button {
+      appearance: none;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 6px 14px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s, color 0.2s;
+      touch-action: manipulation;
+    }
+    button:hover, button:active {
+      border-color: var(--muted);
+      box-shadow: 0 0 14px rgba(148, 163, 184, 0.22);
+    }
+    button.primary {
+      border-color: var(--accent);
+      color: #047857;
+      font-weight: 600;
+    }
+    button.primary:hover {
+      box-shadow: 0 0 16px rgba(52, 211, 153, 0.35);
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+    }
+    .row label {
+      font-size: 0.72rem;
+      letter-spacing: 1px;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+    .history {
+      font-size: 0.72rem;
+      letter-spacing: 0.5px;
+      color: var(--muted);
+      max-width: 440px;
+      width: 100%;
+    }
+    .history h2 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+      color: var(--muted);
+    }
+    .history ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .history li {
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      line-height: 1.4;
+      color: var(--text);
+    }
+    .status.times-up {
+      color: var(--warn);
+      font-weight: 600;
+      text-shadow: 0 0 12px rgba(217, 119, 6, 0.2);
+      text-transform: none;
+      letter-spacing: 0.04em;
+      line-height: 1.45;
+      max-width: 26rem;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .status.times-up .detail {
+      display: block;
+      margin-top: 8px;
+      font-size: 0.72rem;
+      font-weight: 400;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      text-transform: none;
+    }
+    @media (max-width: 768px) {
+      body { padding: 15px 10px 30px; gap: 10px; }
+      h1 { font-size: 1.8rem; letter-spacing: 2px; }
+      .hint { font-size: 0.65rem; }
+    }
+    @media (max-width: 480px) {
+      h1 { font-size: 1.5rem; }
+      .hint { font-size: 0.6rem; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Hex Composition</h1>
+  <p class="hint">The <strong>challenge</strong> wheel shows <strong>1–6</strong> — read the full text in the list below it. <strong>Spin challenge</strong> and <strong>Spin win</strong> separately, then <strong>Start round</strong> (<strong>40s</strong>). <span class="c-blue">Blue</span> &amp; <span class="c-purple">Purple</span> hexes — more blue in the pile.</p>
+
+  <div class="wheels-block">
+    <div class="wheel-row">
+      <div class="wheel-col" style="flex: 1; min-width: 200px;">
+        <span class="wheel-caption">Challenge</span>
+        <div class="wheel-mount" id="mount-challenge">
+          <svg id="svg-challenge" class="wheel-svg challenge-wheel" width="240" height="240" viewBox="-100 -100 200 200" aria-hidden="true"></svg>
+        </div>
+        <button type="button" class="primary wheel-spin-btn" id="btn-spin-challenge">Spin challenge</button>
+      </div>
+      <div class="wheel-col" style="flex: 0 0 auto;">
+        <span class="wheel-caption">Win</span>
+        <div class="wheel-mount" id="mount-win">
+          <svg id="svg-win" class="wheel-svg win-wheel" width="140" height="140" viewBox="-100 -100 200 200" aria-hidden="true"></svg>
+        </div>
+        <button type="button" class="primary wheel-spin-btn" id="btn-spin-win">Spin win</button>
+      </div>
+    </div>
+    <div class="challenge-list-wrap">
+      <div class="subcap">This spin’s challenges (read here)</div>
+      <ol class="challenge-list" id="challenge-list" aria-label="Challenge options"></ol>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="rule-label">Challenge</div>
+    <div id="rule-text" aria-live="polite">Spin the challenge wheel, then spin win — or the other way around.</div>
+    <div class="rule-label win-after">Win</div>
+    <div id="win-text" aria-live="polite"></div>
+    <p class="win-note">Same hex size: counting pieces is the same as comparing area.</p>
+    <div class="timer-wrap">
+      <div id="timer">0:40</div>
+      <div id="status" class="status"></div>
+    </div>
+    <div class="controls">
+      <button type="button" class="primary" id="btn-start">Start round</button>
+      <button type="button" id="btn-reset">Reset timer</button>
+    </div>
+    <div class="row">
+      <label><input type="checkbox" id="sound" checked> Sound (last 10s + end)</label>
+    </div>
+  </div>
+
+  <div class="history">
+    <h2>Last rounds (session)</h2>
+    <ul id="history-list"></ul>
+  </div>
+
+  <script>
+    const ROUND_SEC = 40;
+
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    const randInt = (a, b) => a + Math.floor(Math.random() * (b - a + 1));
+
+    function pickMostlyBlue() {
+      return Math.random() < 0.88 ? 'Blue' : 'Purple';
+    }
+
+    function escapeHtml(s) {
+      return s
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function colorizeRule(text) {
+      let t = escapeHtml(text);
+      t = t.replace(/\bBlue\b/g, '<span class="c-blue">Blue</span>');
+      t = t.replace(/\bPurple\b/g, '<span class="c-purple">Purple</span>');
+      return t;
+    }
+
+    const rules = {
+      simple: [
+        () => `Together you must use more Blue hexes than Purple hexes.`,
+        () => `At least ${randInt(5, 10)} hexes must be Blue.`,
+        () => `Use at most ${randInt(1, 3)} Purple hexes total (scarce pile).`,
+        () => `All Blue hexes must form one connected group (touching edges).`,
+        () => `No two Purple hexes may share an edge.`,
+        () => `The composition must touch both the left and right sides of your play area.`,
+        () => `The composition must touch both the near and far edges of your play area.`,
+        () => `Purple may not touch any edge of the play area (only Blue touches the boundary).`,
+        () => `At least one ${pickMostlyBlue()} hex must touch the center of the table (agree a dot first).`,
+        () => `Every Purple hex must touch only Blue neighbors (edge-to-edge).`,
+        () => `The outer ring (hexes touching empty table) must include more Blue than Purple.`,
+      ],
+      spicy: [
+        () => `Blue and Purple must each form exactly one connected group.`,
+        () => `Blue forms one large connected group; Purple forms ${randInt(1, 2)} separate small groups only.`,
+        () => `No two Purple hexes may share an edge.`,
+        () => `Exactly ${randInt(1, 3)} Purple hexes; the rest Blue.`,
+        () => `More Blue than Purple must lie on the left half of the play area (agree the line first).`,
+        () => `Exactly ${randInt(2, 6)} Blue hexes may touch the boundary; Purple must be interior only.`,
+        () => `Purple may only appear as a single “cluster” of ${randInt(1, 3)} touching hexes.`,
+        () => `Blue must be a single “snake” (each Blue touches at most two other Blues by edge).`,
+        () => `At least ${randInt(2, 4)} Purple hexes must each touch only Blue neighbors (edge-to-edge).`,
+        () => `The outer ring must be Blue only — no Purple on the outside edge.`,
+      ],
+    };
+
+    const N_CH = 6;
+
+    function generateRandomChallenge() {
+      return Math.random() < 0.5 ? pick(rules.simple)() : pick(rules.spicy)();
+    }
+
+    /** Six unique challenge strings for the wheel (same text = retry). */
+    function generateSixUniqueChallenges() {
+      const out = [];
+      const seen = new Set();
+      for (let g = 0; g < 400 && out.length < N_CH; g++) {
+        const c = generateRandomChallenge();
+        if (!seen.has(c)) {
+          seen.add(c);
+          out.push(c);
+        }
+      }
+      while (out.length < N_CH) out.push(generateRandomChallenge());
+      return out.slice(0, N_CH);
+    }
+
+    /** @type {string[]} */
+    let lastWheelChallenges = [];
+
+    /** @typedef {'versus'|'coop'} WinMode */
+
+    const WIN_LABELS = [
+      { short: 'Pieces', mode: /** @type {WinMode} */ ('versus') },
+      { short: 'Cover', mode: 'coop' },
+    ];
+    const WIN_CONDITIONS = [
+      {
+        mode: /** @type {WinMode} */ ('versus'),
+        text: 'Most pieces of your color wins. (One player Blue, one Purple — count at 0:00.)',
+      },
+      {
+        mode: 'coop',
+        text: 'Most total hexes wins — biggest coverage of the play area. Count every hex at 0:00.',
+      },
+    ];
+
+    function winFromMode(mode) {
+      return WIN_CONDITIONS.find((w) => w.mode === mode) || WIN_CONDITIONS[0];
+    }
+
+    const NS = 'http://www.w3.org/2000/svg';
+
+    /**
+     * @param segments {Array<{ short?: string }>}
+     */
+    function buildWheelSvg(svgEl, segments, className) {
+      const n = segments.length;
+      const r = 88;
+      const slice = (2 * Math.PI) / n;
+      svgEl.innerHTML = '';
+      for (let i = 0; i < n; i++) {
+        const a0 = i * slice - Math.PI / 2;
+        const a1 = (i + 1) * slice - Math.PI / 2;
+        const x0 = r * Math.cos(a0);
+        const y0 = r * Math.sin(a0);
+        const x1 = r * Math.cos(a1);
+        const y1 = r * Math.sin(a1);
+        const large = slice > Math.PI ? 1 : 0;
+        const fill = i % 2 === 0 ? '#f1f5f9' : '#ffffff';
+        const path = document.createElementNS(NS, 'path');
+        path.setAttribute('d', `M 0 0 L ${x0} ${y0} A ${r} ${r} 0 ${large} 1 ${x1} ${y1} Z`);
+        path.setAttribute('fill', fill);
+        path.setAttribute('stroke', '#e2e8f0');
+        path.setAttribute('stroke-width', '0.8');
+        svgEl.appendChild(path);
+        const mid = (i + 0.5) * slice - Math.PI / 2;
+        const tr = r * 0.58;
+        const tx = tr * Math.cos(mid);
+        const ty = tr * Math.sin(mid);
+        const angleDeg = (mid * 180) / Math.PI + 90;
+        const text = document.createElementNS(NS, 'text');
+        text.setAttribute('x', String(tx));
+        text.setAttribute('y', String(ty));
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'middle');
+        text.setAttribute('transform', `rotate(${angleDeg}, ${tx}, ${ty})`);
+        text.textContent = segments[i].short || '';
+        svgEl.appendChild(text);
+      }
+      svgEl.classList.remove('challenge-wheel', 'win-wheel');
+      if (className) svgEl.classList.add(className);
+    }
+
+    function renderChallengeList() {
+      const ol = document.getElementById('challenge-list');
+      ol.innerHTML = lastWheelChallenges
+        .map(
+          (text, i) =>
+            `<li data-i="${i}"><span class="ch-num">${i + 1}.</span><span class="ch-body">${colorizeRule(text)}</span></li>`
+        )
+        .join('');
+      clearPickHighlight();
+    }
+
+    function clearPickHighlight() {
+      document.querySelectorAll('.challenge-list li.picked').forEach((li) => li.classList.remove('picked'));
+    }
+
+    function highlightPick(index) {
+      clearPickHighlight();
+      const li = document.querySelector(`.challenge-list li[data-i="${index}"]`);
+      if (li) li.classList.add('picked');
+    }
+
+    function rebuildChallengeWheel() {
+      lastWheelChallenges = generateSixUniqueChallenges();
+      const segs = Array.from({ length: N_CH }, (_, i) => ({ short: String(i + 1) }));
+      buildWheelSvg(document.getElementById('svg-challenge'), segs, 'challenge-wheel');
+      renderChallengeList();
+    }
+
+    /** Land segment `index` under the top pointer; spin forward from current rotation. */
+    function nextRotation(currentRot, n, index) {
+      const slice = 360 / n;
+      const spins = 5 + Math.floor(Math.random() * 3);
+      const desiredMod = (360 - (index * slice + slice / 2) + 360) % 360;
+      let curMod = ((currentRot % 360) + 360) % 360;
+      let delta = desiredMod - curMod;
+      if (delta <= 0) delta += 360;
+      return currentRot + spins * 360 + delta;
+    }
+
+    let rotChallenge = 0;
+    let rotWin = 0;
+    let spinningCh = false;
+    let spinningWin = false;
+
+    let currentRule = '';
+    let currentWinMode = 'versus';
+    let remaining = ROUND_SEC;
+    let running = false;
+    let rafId = 0;
+    let lastTs = 0;
+    const history = [];
+
+    const elChallenge = document.getElementById('svg-challenge');
+    const elWinSvg = document.getElementById('svg-win');
+    const elRule = document.getElementById('rule-text');
+    const elWin = document.getElementById('win-text');
+    const elTimer = document.getElementById('timer');
+    const elStatus = document.getElementById('status');
+    const elHistory = document.getElementById('history-list');
+    const elSound = document.getElementById('sound');
+
+    rebuildChallengeWheel();
+    buildWheelSvg(elWinSvg, WIN_LABELS, 'win-wheel');
+
+    let audioCtx = null;
+    function beep(freq, dur = 0.08, vol = 0.12) {
+      if (!elSound.checked) return;
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.connect(g);
+        g.connect(audioCtx.destination);
+        o.frequency.value = freq;
+        o.type = 'sine';
+        g.gain.value = vol;
+        o.start();
+        o.stop(audioCtx.currentTime + dur);
+      } catch (_) {}
+    }
+
+    function formatTime(sec) {
+      const s = Math.max(0, Math.ceil(sec));
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      return m + ':' + (r < 10 ? '0' : '') + r;
+    }
+
+    function pushHistory(text) {
+      history.unshift(text);
+      if (history.length > 3) history.pop();
+      elHistory.innerHTML = history
+        .map((t) => '<li>' + colorizeRule(t).replace(/\n/g, '<br>') + '</li>')
+        .join('');
+    }
+
+    let historyFingerprint = '';
+
+    function tryPushHistory() {
+      if (!currentRule || !elWin.textContent.trim()) return;
+      const w = winFromMode(currentWinMode);
+      const fp = currentRule + '\n' + w.text;
+      if (fp === historyFingerprint) return;
+      historyFingerprint = fp;
+      pushHistory(fp);
+    }
+
+    function updateStartEnabled() {
+      const ok = !!currentRule && !!elWin.textContent.trim();
+      const busy = running || spinningCh || spinningWin;
+      document.getElementById('btn-start').disabled = !ok || busy;
+    }
+
+    function prepSpin(el, currentRot) {
+      el.classList.remove('spinning');
+      el.style.transition = 'none';
+      el.style.transform = `rotate(${currentRot}deg)`;
+      el.offsetHeight;
+    }
+
+    function spinChallengeOnly() {
+      if (spinningCh || spinningWin || running) return;
+      spinningCh = true;
+      const btn = document.getElementById('btn-spin-challenge');
+      btn.disabled = true;
+      updateStartEnabled();
+
+      rebuildChallengeWheel();
+      rotChallenge = 0;
+      prepSpin(elChallenge, 0);
+      const pickCh = Math.floor(Math.random() * N_CH);
+
+      requestAnimationFrame(() => {
+        elChallenge.style.transition = '';
+        elChallenge.classList.add('spinning');
+        const nextCh = nextRotation(rotChallenge, N_CH, pickCh);
+        elChallenge.style.transform = `rotate(${nextCh}deg)`;
+        rotChallenge = nextCh;
+
+        const onChEnd = (e) => {
+          if (e.target !== elChallenge || e.propertyName !== 'transform') return;
+          elChallenge.removeEventListener('transitionend', onChEnd);
+          elChallenge.classList.remove('spinning');
+          beep(523, 0.06, 0.1);
+          currentRule = lastWheelChallenges[pickCh];
+          elRule.innerHTML = colorizeRule(currentRule);
+          highlightPick(pickCh);
+          spinningCh = false;
+          btn.disabled = false;
+          tryPushHistory();
+          updateStartEnabled();
+        };
+        elChallenge.addEventListener('transitionend', onChEnd);
+      });
+    }
+
+    function spinWinOnly() {
+      if (spinningCh || spinningWin || running) return;
+      spinningWin = true;
+      const btn = document.getElementById('btn-spin-win');
+      btn.disabled = true;
+      updateStartEnabled();
+
+      const pickW = Math.floor(Math.random() * 2);
+      prepSpin(elWinSvg, rotWin);
+      requestAnimationFrame(() => {
+        elWinSvg.style.transition = '';
+        elWinSvg.classList.add('spinning');
+        const nextW = nextRotation(rotWin, 2, pickW);
+        elWinSvg.style.transform = `rotate(${nextW}deg)`;
+        rotWin = nextW;
+
+        const onWinEnd = (ev) => {
+          if (ev.target !== elWinSvg || ev.propertyName !== 'transform') return;
+          elWinSvg.removeEventListener('transitionend', onWinEnd);
+          elWinSvg.classList.remove('spinning');
+          beep(659, 0.08, 0.1);
+          const win = winFromMode(WIN_LABELS[pickW].mode);
+          currentWinMode = win.mode;
+          elWin.innerHTML = colorizeRule(win.text);
+          spinningWin = false;
+          btn.disabled = false;
+          tryPushHistory();
+          updateStartEnabled();
+        };
+        elWinSvg.addEventListener('transitionend', onWinEnd);
+      });
+    }
+
+    function updateTimerDisplay() {
+      elTimer.textContent = formatTime(remaining);
+      elTimer.classList.remove('warning', 'ended');
+      if (!running && remaining <= 0) elTimer.classList.add('ended');
+      else if (running && remaining <= 10 && remaining > 0) elTimer.classList.add('warning');
+    }
+
+    function endRound() {
+      running = false;
+      remaining = 0;
+      lastTs = 0;
+      const detail =
+        currentWinMode === 'versus'
+          ? '<span class="detail">Count Blue vs Purple — more pieces wins.</span>'
+          : '<span class="detail">Count all hexes — most coverage wins.</span>';
+      elStatus.innerHTML = '<strong>0:00 — hands off.</strong>' + detail;
+      elStatus.classList.add('times-up');
+      elTimer.classList.add('ended');
+      updateTimerDisplay();
+      beep(440, 0.2, 0.15);
+      beep(330, 0.2, 0.12);
+      updateStartEnabled();
+    }
+
+    function tick(ts) {
+      if (!running) return;
+      if (!lastTs) lastTs = ts;
+      const dt = (ts - lastTs) / 1000;
+      lastTs = ts;
+      const prevWhole = Math.ceil(remaining);
+      remaining = Math.max(0, remaining - dt);
+      const nextWhole = Math.ceil(remaining);
+      if (nextWhole < prevWhole && nextWhole <= 10 && nextWhole > 0 && elSound.checked) {
+        beep(880, 0.05, 0.06);
+      }
+      updateTimerDisplay();
+      if (remaining <= 0) {
+        cancelAnimationFrame(rafId);
+        endRound();
+        return;
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+
+    function startRound() {
+      if (running || spinningCh || spinningWin) return;
+      if (!currentRule || !elWin.textContent.trim()) return;
+      remaining = ROUND_SEC;
+      lastTs = 0;
+      running = true;
+      elStatus.textContent = 'Building…';
+      elStatus.classList.remove('times-up');
+      elTimer.classList.remove('ended');
+      updateTimerDisplay();
+      document.getElementById('btn-start').disabled = true;
+      rafId = requestAnimationFrame(tick);
+    }
+
+    function resetTimer() {
+      running = false;
+      cancelAnimationFrame(rafId);
+      remaining = ROUND_SEC;
+      lastTs = 0;
+      elStatus.innerHTML = '';
+      elStatus.classList.remove('times-up');
+      elTimer.classList.remove('ended');
+      updateTimerDisplay();
+      updateStartEnabled();
+    }
+
+    document.getElementById('btn-spin-challenge').addEventListener('click', spinChallengeOnly);
+    document.getElementById('btn-spin-win').addEventListener('click', spinWinOnly);
+    document.getElementById('btn-start').addEventListener('click', () => {
+      if (remaining <= 0 && !running) resetTimer();
+      startRound();
+    });
+    document.getElementById('btn-reset').addEventListener('click', resetTimer);
+
+    elChallenge.style.transform = 'rotate(0deg)';
+    elWinSvg.style.transform = 'rotate(0deg)';
+    updateTimerDisplay();
+    updateStartEnabled();
+  </script>
+</body>
+</html>
